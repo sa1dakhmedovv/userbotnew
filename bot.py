@@ -2,7 +2,7 @@ import asyncio
 import os
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from aiogram import Bot, Dispatcher
 from aiogram.types import Message, BotCommand
@@ -17,7 +17,7 @@ from telethon.tl.functions.channels import CreateChannelRequest, EditAdminReques
 from telethon.tl.functions.messages import ExportChatInviteRequest
 from telethon.tl.types import ChatAdminRights
 
-# =========== SETTINGS ============
+# =========== SETTINGS =============
 BOT_TOKEN = "8195096775:AAEsEFoYpltqo1KrMXORzYfC-4BeIMTMh-4"
 TELETHON_API_ID = 28369489
 TELETHON_API_HASH = "369653d4ba4277f81d109368af59f82f"
@@ -31,16 +31,15 @@ if not os.path.exists(DATA_FILE):
     with open(DATA_FILE, 'w') as f:
         json.dump({}, f)
 
-# =========== BOT ============
+# =========== BOT =============
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# =========== STATES ============
+# =========== STATE ============
 class AddSession(StatesGroup):
     waiting_for_name = State()
     waiting_for_phone = State()
     waiting_for_code = State()
-    waiting_for_password = State()
 
 # =========== UTILS ============
 def load_data():
@@ -74,8 +73,9 @@ def update_session(name, updates):
 def get_session(name):
     return load_data().get(name)
 
-# =========== BACKGROUND TASKS ============
+# =========== GLOBAL =============
 running_tasks = {}
+flood_timers = {}   # session_name: datetime of floodwait end or None
 
 oylar = {
     1: "yanvar", 2: "fevral", 3: "mart", 4: "aprel",
@@ -93,6 +93,7 @@ admin_rights = ChatAdminRights(
     manage_call=True
 )
 
+# =========== BACKGROUND TASK ============
 async def run_session(name):
     params = get_session(name)
     if not params or params["status"] != "running":
@@ -102,6 +103,8 @@ async def run_session(name):
     client = TelegramClient(session_file, TELETHON_API_ID, TELETHON_API_HASH)
     await client.start(params["phone_number"])
 
+    flood_timers[name] = None
+
     while True:
         current = get_session(name)
         if not current or current["status"] != "running":
@@ -109,13 +112,11 @@ async def run_session(name):
             break
 
         try:
-            # Guruh nomi va sana
             hozir = datetime.now()
             guruh_nom = f'{current["group_name"]} {current["index"]}'
             sana_oy = oylar[hozir.month]
             sana_xabar = hozir.strftime(f"%d-{sana_oy} %Y yil")
 
-            # Guruh yaratish
             result = await client(CreateChannelRequest(
                 title=guruh_nom,
                 about="Avtomatik yaratilgan",
@@ -124,22 +125,21 @@ async def run_session(name):
             superchat = result.chats[0]
             link = (await client(ExportChatInviteRequest(superchat.id))).link
 
-            # Foydalanuvchi qo'shish va admin qilish
             await client(InviteToChannelRequest(superchat, [current["admin_user"]]))
             await client(EditAdminRequest(superchat, current["admin_user"], admin_rights, rank="Admin"))
             await client.send_message(superchat.id, f"📅 Guruh ochildi: {sana_xabar}\n🔗 Havola: {link}")
 
-            # Logga yozish
             with open(LOG_FILE, "a") as f:
                 f.write(f"{link}\n")
 
-            # Index oshirish
             update_session(name, {"index": current["index"] + 1})
+            flood_timers[name] = None
 
             await asyncio.sleep(current["delay"])
 
         except FloodWaitError as e:
-            await bot.send_message(current["owner_id"], f"⚠️ FloodWait {e.seconds} soniya session: {name}")
+            flood_timers[name] = datetime.now() + timedelta(seconds=e.seconds)
+            await bot.send_message(current["owner_id"], f"⚠️ FloodWait: {e.seconds}s session: {name}")
             await asyncio.sleep(e.seconds + 5)
         except ChatAdminRequiredError as e:
             await bot.send_message(current["owner_id"], f"❌ Admin required error: {e}")
@@ -151,7 +151,6 @@ async def run_session(name):
     await client.disconnect()
 
 # =========== COMMAND HANDLERS ============
-
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     await message.answer(
@@ -170,14 +169,27 @@ async def cmd_sessions(message: Message):
     if not data:
         await message.answer("📭 Sessionlar yo'q.")
         return
+
     text = "📋 Sessionlar:\n"
+    now = datetime.now()
     for k, v in data.items():
+        flood_line = ""
+        if flood_timers.get(k):
+            remaining = int((flood_timers[k] - now).total_seconds())
+            if remaining > 0:
+                flood_line = f"• FloodWait: {remaining}s qolgan\n"
+            else:
+                flood_line = "• FloodWait: yo'q\n"
+        else:
+            flood_line = "• FloodWait: yo'q\n"
+
         text += (f"\n✅ {k}\n"
                  f"• Phone: {v['phone_number']}\n"
                  f"• Group: {v['group_name']}\n"
                  f"• Admin: {v['admin_user']}\n"
                  f"• Index: {v['index']}\n"
                  f"• Delay: {v['delay']}s\n"
+                 f"{flood_line}"
                  f"• Status: {v['status']}\n")
     await message.answer(text)
 
@@ -189,6 +201,7 @@ async def cmd_remove(message: Message):
         return
     _, name = parts
     remove_session(name)
+    flood_timers.pop(name, None)
     await message.answer(f"🗑️ Session '{name}' o'chirildi.")
 
 @dp.message(Command("stop"))
@@ -238,13 +251,13 @@ async def cmd_run(message: Message):
 
         task = asyncio.create_task(run_session(name))
         running_tasks[name] = task
+        flood_timers[name] = None
 
         await message.answer(f"✅ Session '{name}' ishga tushdi.")
     except Exception as e:
         await message.answer(f"❌ Xato: {e}")
 
-# ====== FSM uchun ======
-
+# =========== FSM YANGI SESSION ============
 @dp.message(Command("newsession"))
 async def cmd_newsession(message: Message, state: FSMContext):
     await message.answer("✏️ Session nomini yozing:")
@@ -303,14 +316,15 @@ async def state_code(message: Message, state: FSMContext):
         await message.answer(f"✅ Session '{name}' yaratildi!")
         await state.clear()
     except SessionPasswordNeededError:
-        await message.answer("🔐 2FA parolni kiriting:")
-        await state.set_state(AddSession.waiting_for_password)
+        await message.answer("🔐 2FA parol kerak. Qo'llab-quvvatlanmaydi.")
+        await client.disconnect()
+        await state.clear()
     except Exception as e:
         await message.answer(f"❌ Xato: {e}")
         await client.disconnect()
         await state.clear()
 
-# ====== BOT STARTUP ======
+# =========== STARTUP ============
 async def main():
     await bot.set_my_commands([
         BotCommand(command="start", description="Asosiy menyu"),
