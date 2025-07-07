@@ -147,16 +147,18 @@ async def run_session(name):
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     await message.answer(
-        "🤖 Bot ishga tushdi.\n\n"
-        "/newsession - Yangi session qo'shish (ochiq)\n"
-        "/run - FAQAT admin\n"
-        "/stop - FAQAT admin\n"
-        "/stopall - FAQAT admin\n"
-        "/remove - FAQAT admin\n"
-        "/sessions - FAQAT admin\n"
-        "/setdelay - FAQAT admin\n"
-        "/status - FAQAT admin"
-    )
+    "🤖 Bot ishga tushdi.\n\n"
+    "📌 Buyruqlar ro'yxati:\n\n"
+    "/newsession - Yangi session qo'shish\n"
+    "/run - Sessionni ishga tushirish \n"
+    "/sessions - Sessionlar ro'yxatini ko'rish \n"
+    "/stop - Sessionni to'xtatish \n"
+    "/stopall - Barcha sessionlarni to'xtatish \n"
+    "/remove - Sessionni o'chirish \n"
+    "/setdelay - Sessionlar kutish vaqtini o'zgartirish \n"
+    "/status - Sessionlar holatini ko'rish "
+)
+
 
 # ======== ADMIN GUARD ========
 async def admin_guard(message: Message):
@@ -272,15 +274,15 @@ async def cmd_status(message: Message):
 # ======== STARTUP ========
 async def main():
     await bot.set_my_commands([
-        BotCommand(command="start", description="Asosiy menyu"),
-        BotCommand(command="newsession", description="Yangi session qo'shish (ochiq)"),
-        BotCommand(command="run", description="FAQAT admin"),
-        BotCommand(command="stop", description="FAKAT admin"),
-        BotCommand(command="stopall", description="FAKAT admin"),
-        BotCommand(command="remove", description="FAKAT admin"),
-        BotCommand(command="sessions", description="FAKAT admin"),
-        BotCommand(command="setdelay", description="FAKAT admin"),
-        BotCommand(command="status", description="FAKAT admin")
+    BotCommand(command="start", description="Botni boshlash"),
+    BotCommand(command="newsession", description="Yangi session qo'shish"),
+    BotCommand(command="run", description="Sessionni ishga tushirish"),
+    BotCommand(command="stop", description="Sessionni to'xtatish"),
+    BotCommand(command="stopall", description="Barcha sessionlarni to'xtatish"),
+    BotCommand(command="remove", description="Sessionni o'chirish"),
+    BotCommand(command="sessions", description="Sessionlar ro'yxatini ko'rish"),
+    BotCommand(command="setdelay", description="Sessionlar delay vaqtini o'zgartirish"),
+    BotCommand(command="status", description="Sessionlar holatini ko'rish")
     ])
     await dp.start_polling(bot)
 
