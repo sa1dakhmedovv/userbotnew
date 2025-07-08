@@ -4,10 +4,7 @@ import sys
 import json
 import time
 from datetime import datetime
-from aiogram import Router
-
-
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, Router
 from aiogram.types import Message, BotCommand
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -24,7 +21,7 @@ from telethon.tl.types import ChatAdminRights
 BOT_TOKEN = '8195096775:AAEsEFoYpltqo1KrMXORzYfC-4BeIMTMh-4'
 TELETHON_API_ID = 28369489
 TELETHON_API_HASH = '369653d4ba4277f81d109368af59f82f'
-ADMIN_ID = 5802051984  
+ADMIN_ID = 5802051984 
 
 SESSIONS_DIR = 'sessions'
 DATA_FILE = 'data.json'
@@ -40,13 +37,11 @@ dp = Dispatcher(storage=MemoryStorage())
 router = Router()
 dp.include_router(router)
 
-
 # ===== STATES =====
 class AddSession(StatesGroup):
     waiting_for_name = State()
     waiting_for_phone = State()
     waiting_for_code = State()
-    waiting_for_password = State()
 
 # ===== UTILS =====
 def load_data():
@@ -79,6 +74,11 @@ def update_session(name, updates):
 
 def get_session(name):
     return load_data().get(name)
+
+def is_floodwait_active(session):
+    now = int(time.time())
+    until = session.get("floodwait_until")
+    return until and until > now
 
 # ===== BACKGROUND =====
 running_tasks = {}
@@ -140,14 +140,20 @@ async def run_session(name):
         except FloodWaitError as e:
             until_timestamp = int(time.time()) + e.seconds
             update_session(name, {
-                "status": "stopped",
+                "status": "floodwait",
                 "floodwait_until": until_timestamp
             })
             await bot.send_message(current["owner_id"], f"⚠️ FloodWait: {e.seconds} soniya session: {name}")
+
             for i in range(e.seconds, 0, -1):
                 if i % 30 == 0 or i <= 10:
-                    await bot.send_message(current["owner_id"], f"⏳ Qolgan: {i} sekund")
+                    try:
+                        await bot.send_message(current["owner_id"], f"⏳ FloodWait teskari sanoq: {i} sekund")
+                    except Exception:
+                        pass
                 await asyncio.sleep(1)
+            await client.disconnect()
+            break
         except ChatAdminRequiredError as e:
             await bot.send_message(current["owner_id"], f"❌ Admin required error: {e}")
             break
@@ -182,16 +188,24 @@ async def cmd_start(message: Message):
 
 @dp.message(Command("run"))
 async def cmd_run(message: Message):
-    if not await admin_guard(message): return
+    if not await admin_guard(message):
+        return
+
     args = message.text.strip().split(maxsplit=5)
     if len(args) != 6:
         return await message.answer("⚠️ /run <name> \"<guruh_nomi>\" <index> <admin_username> <delay>")
+
     _, name, gname, index, admin, delay = args
     index = int(index)
     delay = int(delay)
+
     session = get_session(name)
     if not session:
         return await message.answer("❌ Session topilmadi.")
+
+    if is_floodwait_active(session):
+        remaining = session["floodwait_until"] - int(time.time())
+        return await message.answer(f"⚠️ FloodWait tugamagan! Qolgan vaqt: {remaining} sekund.")
 
     update_session(name, {
         "group_name": gname,
@@ -199,7 +213,8 @@ async def cmd_run(message: Message):
         "admin_user": admin,
         "delay": delay,
         "status": "running",
-        "owner_id": message.from_user.id
+        "owner_id": message.from_user.id,
+        "floodwait_until": None
     })
 
     task = running_tasks.get(name)
@@ -212,7 +227,8 @@ async def cmd_run(message: Message):
 
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
-    if not await admin_guard(message): return
+    if not await admin_guard(message):
+        return
     args = message.text.strip().split()
     if len(args) != 2:
         return await message.answer("⚠️ /stop <session_name>")
@@ -225,7 +241,8 @@ async def cmd_stop(message: Message):
 
 @dp.message(Command("stopall"))
 async def cmd_stopall(message: Message):
-    if not await admin_guard(message): return
+    if not await admin_guard(message):
+        return
     data = load_data()
     for name in data.keys():
         update_session(name, {"status": "stopped"})
@@ -233,7 +250,8 @@ async def cmd_stopall(message: Message):
 
 @dp.message(Command("remove"))
 async def cmd_remove(message: Message):
-    if not await admin_guard(message): return
+    if not await admin_guard(message):
+        return
     parts = message.text.strip().split()
     if len(parts) != 2:
         return await message.answer("⚠️ /remove <session_name>")
@@ -243,7 +261,8 @@ async def cmd_remove(message: Message):
 
 @dp.message(Command("sessions"))
 async def cmd_sessions(message: Message):
-    if not await admin_guard(message): return
+    if not await admin_guard(message):
+        return
     data = load_data()
     if not data:
         return await message.answer("📭 Sessionlar yo'q.")
@@ -262,13 +281,14 @@ async def cmd_sessions(message: Message):
             if remaining > 0:
                 line += f"\n⚠️ FloodWait qolgan: {remaining} sekund"
             else:
-                update_session(k, {"floodwait_until": None})
+                update_session(k, {"floodwait_until": None, "status": "stopped"})
         text += f"{line}\n"
     await message.answer(text)
 
 @dp.message(Command("setdelay"))
 async def cmd_setdelay(message: Message):
-    if not await admin_guard(message): return
+    if not await admin_guard(message):
+        return
     args = message.text.strip().split()
     if len(args) != 2:
         return await message.answer("⚠️ /setdelay <sekundlar>")
@@ -283,7 +303,8 @@ async def cmd_setdelay(message: Message):
 
 @dp.message(Command("status"))
 async def cmd_status(message: Message):
-    if not await admin_guard(message): return
+    if not await admin_guard(message):
+        return
     data = load_data()
     if not data:
         return await message.answer("📭 Hech narsa yo'q.")
@@ -295,7 +316,8 @@ async def cmd_status(message: Message):
 # ===== NEWSESSION FSM =====
 @router.message(Command("newsession"))
 async def start_newsession(message: Message, state: FSMContext):
-    if not await admin_guard(message): return
+    if not await admin_guard(message):
+        return
     await message.answer("📱 Session nomini kiriting:")
     await state.set_state(AddSession.waiting_for_name)
 
@@ -314,10 +336,15 @@ async def get_phone_number(message: Message, state: FSMContext):
     session_file = os.path.join(SESSIONS_DIR, f"{name}.session")
     client = TelegramClient(session_file, TELETHON_API_ID, TELETHON_API_HASH)
     await client.connect()
-    await client.send_code_request(phone)
+    try:
+        await client.send_code_request(phone)
+    except Exception as e:
+        await message.answer(f"❌ Kod yuborishda xato: {e}")
+        await state.clear()
+        return
 
-    await state.update_data(client=client)
     await state.update_data(phone=phone)
+    await state.update_data(client=client)
     await message.answer("✅ Kod yuborildi, uni kiriting:")
     await state.set_state(AddSession.waiting_for_code)
 
@@ -330,8 +357,14 @@ async def get_code(message: Message, state: FSMContext):
     try:
         await client.sign_in(phone, code)
     except SessionPasswordNeededError:
-        await message.answer("🔐 2FA parolni kiriting:")
-        await state.set_state(AddSession.waiting_for_password)
+        await message.answer("🔐 2FA parol o'rnatilgan. U kirita olmaymiz. Session qo'shilmadi.")
+        await client.disconnect()
+        await state.clear()
+        return
+    except Exception as e:
+        await message.answer(f"❌ Kirishda xato: {e}")
+        await client.disconnect()
+        await state.clear()
         return
 
     add_session(data['name'], {
@@ -345,26 +378,6 @@ async def get_code(message: Message, state: FSMContext):
     await client.disconnect()
     await message.answer("✅ Session muvaffaqiyatli qo'shildi!")
     await state.clear()
-
-@router.message(AddSession.waiting_for_password)
-async def get_password(message: Message, state: FSMContext):
-    data = await state.get_data()
-    client: TelegramClient = data['client']
-    password = message.text.strip()
-    await client.sign_in(password=password)
-
-    add_session(data['name'], {
-        "phone_number": data['phone'],
-        "group_name": "",
-        "index": 1,
-        "admin_user": "",
-        "delay": 60,
-        "status": "stopped"
-    })
-    await client.disconnect()
-    await message.answer("✅ Session muvaffaqiyatli qo'shildi (2FA bilan)!")
-    await state.clear()
-
 
 # ===== STARTUP =====
 async def main():
