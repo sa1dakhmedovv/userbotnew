@@ -2,6 +2,7 @@ import asyncio
 import os
 import sys
 import json
+import time
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher
@@ -17,11 +18,11 @@ from telethon.tl.functions.channels import CreateChannelRequest, EditAdminReques
 from telethon.tl.functions.messages import ExportChatInviteRequest
 from telethon.tl.types import ChatAdminRights
 
-# ======== CONFIG ========
+# ===== CONFIG =====
 BOT_TOKEN = '8195096775:AAEsEFoYpltqo1KrMXORzYfC-4BeIMTMh-4'
 TELETHON_API_ID = 28369489
 TELETHON_API_HASH = '369653d4ba4277f81d109368af59f82f'
-ADMIN_ID = 5802051984  # ← faqat shu ID ishlata oladi
+ADMIN_ID = 5802051984  
 
 SESSIONS_DIR = 'sessions'
 DATA_FILE = 'data.json'
@@ -35,14 +36,14 @@ if not os.path.exists(DATA_FILE):
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# ======== STATES ========
+# ===== STATES =====
 class AddSession(StatesGroup):
     waiting_for_name = State()
     waiting_for_phone = State()
     waiting_for_code = State()
     waiting_for_password = State()
 
-# ======== UTILS ========
+# ===== UTILS =====
 def load_data():
     with open(DATA_FILE, 'r') as f:
         return json.load(f)
@@ -74,7 +75,7 @@ def update_session(name, updates):
 def get_session(name):
     return load_data().get(name)
 
-# ======== BACKGROUND ========
+# ===== BACKGROUND =====
 running_tasks = {}
 
 oylar = {
@@ -132,8 +133,16 @@ async def run_session(name):
             await asyncio.sleep(current["delay"])
 
         except FloodWaitError as e:
-            await bot.send_message(current["owner_id"], f"⚠️ FloodWait {e.seconds} soniya session: {name}")
-            await asyncio.sleep(e.seconds + 5)
+            until_timestamp = int(time.time()) + e.seconds
+            update_session(name, {
+                "status": "stopped",
+                "floodwait_until": until_timestamp
+            })
+            await bot.send_message(current["owner_id"], f"⚠️ FloodWait: {e.seconds} soniya session: {name}")
+            for i in range(e.seconds, 0, -1):
+                if i % 30 == 0 or i <= 10:
+                    await bot.send_message(current["owner_id"], f"⏳ Qolgan: {i} sekund")
+                await asyncio.sleep(1)
         except ChatAdminRequiredError as e:
             await bot.send_message(current["owner_id"], f"❌ Admin required error: {e}")
             break
@@ -143,31 +152,29 @@ async def run_session(name):
 
     await client.disconnect()
 
-# ======== COMMANDS ========
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    await message.answer(
-    "🤖 Bot ishga tushdi.\n\n"
-    "📌 Buyruqlar ro'yxati:\n\n"
-    "/newsession - Yangi session qo'shish\n"
-    "/run - Sessionni ishga tushirish \n"
-    "/sessions - Sessionlar ro'yxatini ko'rish \n"
-    "/stop - Sessionni to'xtatish \n"
-    "/stopall - Barcha sessionlarni to'xtatish \n"
-    "/remove - Sessionni o'chirish \n"
-    "/setdelay - Sessionlar kutish vaqtini o'zgartirish \n"
-    "/status - Sessionlar holatini ko'rish "
-)
-
-
-# ======== ADMIN GUARD ========
+# ===== ADMIN GUARD =====
 async def admin_guard(message: Message):
     if message.from_user.id != ADMIN_ID:
         await message.reply("⛔ Bu buyruq faqat admin uchun ruxsat etilgan.")
         return False
     return True
 
-# ======== ADMIN COMMANDS ========
+# ===== COMMANDS =====
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    await message.answer(
+        "🤖 Bot ishga tushdi.\n\n"
+        "📌 Buyruqlar ro'yxati:\n"
+        "/newsession - Yangi session qo'shish\n"
+        "/run - Sessionni ishga tushirish\n"
+        "/sessions - Sessionlar ro'yxatini ko'rish\n"
+        "/stop - Sessionni to'xtatish\n"
+        "/stopall - Barcha sessionlarni to'xtatish\n"
+        "/remove - Sessionni o'chirish\n"
+        "/setdelay - Sessionlar kutish vaqtini o'zgartirish\n"
+        "/status - Sessionlar holatini ko'rish"
+    )
+
 @dp.message(Command("run"))
 async def cmd_run(message: Message):
     if not await admin_guard(message): return
@@ -189,6 +196,11 @@ async def cmd_run(message: Message):
         "status": "running",
         "owner_id": message.from_user.id
     })
+
+    task = running_tasks.get(name)
+    if task and not task.done():
+        task.cancel()
+
     task = asyncio.create_task(run_session(name))
     running_tasks[name] = task
     await message.answer(f"✅ Session '{name}' ishga tushdi.")
@@ -231,14 +243,22 @@ async def cmd_sessions(message: Message):
     if not data:
         return await message.answer("📭 Sessionlar yo'q.")
     text = "📋 Sessionlar:\n"
+    now = int(time.time())
     for k, v in data.items():
-        text += (f"\n✅ {k}\n"
-                 f"• Phone: {v['phone_number']}\n"
-                 f"• Group: {v['group_name']}\n"
-                 f"• Admin: {v['admin_user']}\n"
-                 f"• Index: {v['index']}\n"
-                 f"• Delay: {v['delay']}s\n"
-                 f"• Status: {v['status']}\n")
+        line = (f"\n✅ {k}\n"
+                f"• Phone: {v['phone_number']}\n"
+                f"• Group: {v['group_name']}\n"
+                f"• Admin: {v['admin_user']}\n"
+                f"• Index: {v['index']}\n"
+                f"• Delay: {v['delay']}s\n"
+                f"• Status: {v['status']}")
+        if v.get("floodwait_until"):
+            remaining = v["floodwait_until"] - now
+            if remaining > 0:
+                line += f"\n⚠️ FloodWait qolgan: {remaining} sekund"
+            else:
+                update_session(k, {"floodwait_until": None})
+        text += f"{line}\n"
     await message.answer(text)
 
 @dp.message(Command("setdelay"))
@@ -267,22 +287,85 @@ async def cmd_status(message: Message):
         text += f"\n✅ {k}: {v['status']}"
     await message.answer(text)
 
-# ======== NEWSESSION (ochiq) ========
-# bu yerda avvalgi newsession FSM kodingni qo'yasan
-# (shu qismini o'zgartirmay tur, ochiq qoladi!)
+# ===== NEWSESSION FSM =====
+@dp.message(Command("newsession"))
+async def start_newsession(message: Message, state: FSMContext):
+    if not await admin_guard(message): return
+    await message.answer("📱 Session nomini kiriting:")
+    await state.set_state(AddSession.waiting_for_name)
 
-# ======== STARTUP ========
+@dp.message(AddSession.waiting_for_name)
+async def get_session_name(message: Message, state: FSMContext):
+    await state.update_data(name=message.text.strip())
+    await message.answer("📞 Telefon raqamini kiriting (kod bilan):")
+    await state.set_state(AddSession.waiting_for_phone)
+
+@dp.message(AddSession.waiting_for_phone)
+async def get_phone_number(message: Message, state: FSMContext):
+    await state.update_data(phone=message.text.strip())
+    await message.answer("✅ Kod yuborildi, uni kiriting:")
+    data = await state.get_data()
+
+    session_file = os.path.join(SESSIONS_DIR, f"{data['name']}.session")
+    client = TelegramClient(session_file, TELETHON_API_ID, TELETHON_API_HASH)
+    await client.connect()
+    await client.send_code_request(data['phone'])
+    await state.update_data(client=client)
+    await state.set_state(AddSession.waiting_for_code)
+
+@dp.message(AddSession.waiting_for_code)
+async def get_code(message: Message, state: FSMContext):
+    data = await state.get_data()
+    client: TelegramClient = data['client']
+    try:
+        await client.sign_in(data['phone'], message.text.strip())
+    except SessionPasswordNeededError:
+        await message.answer("🔐 2FA parolni kiriting:")
+        await state.set_state(AddSession.waiting_for_password)
+        return
+
+    add_session(data['name'], {
+        "phone_number": data['phone'],
+        "group_name": "",
+        "index": 1,
+        "admin_user": "",
+        "delay": 60,
+        "status": "stopped"
+    })
+    await client.disconnect()
+    await message.answer("✅ Session muvaffaqiyatli qo'shildi!")
+    await state.clear()
+
+@dp.message(AddSession.waiting_for_password)
+async def get_password(message: Message, state: FSMContext):
+    data = await state.get_data()
+    client: TelegramClient = data['client']
+    await client.sign_in(password=message.text.strip())
+
+    add_session(data['name'], {
+        "phone_number": data['phone'],
+        "group_name": "",
+        "index": 1,
+        "admin_user": "",
+        "delay": 60,
+        "status": "stopped"
+    })
+    await client.disconnect()
+    await message.answer("✅ Session muvaffaqiyatli qo'shildi (2FA bilan)!")
+    await state.clear()
+
+# ===== STARTUP =====
 async def main():
     await bot.set_my_commands([
-    BotCommand(command="start", description="Botni boshlash"),
-    BotCommand(command="newsession", description="Yangi session qo'shish"),
-    BotCommand(command="run", description="Sessionni ishga tushirish"),
-    BotCommand(command="stop", description="Sessionni to'xtatish"),
-    BotCommand(command="stopall", description="Barcha sessionlarni to'xtatish"),
-    BotCommand(command="remove", description="Sessionni o'chirish"),
-    BotCommand(command="sessions", description="Sessionlar ro'yxatini ko'rish"),
-    BotCommand(command="setdelay", description="Sessionlar delay vaqtini o'zgartirish"),
-    BotCommand(command="status", description="Sessionlar holatini ko'rish")
+        BotCommand(command="start", description="Botni boshlash"),
+        BotCommand(command="newsession", description="Yangi session qo'shish"),
+        BotCommand(command="run", description="Sessionni ishga tushirish"),
+        BotCommand(command="stop", description="Sessionni to'xtatish"),
+        BotCommand(command="stopall", description="Barcha sessionlarni to'xtatish"),
+        BotCommand(command="remove", description="Sessionni o'chirish"),
+        BotCommand(command="sessions", description="Sessionlar ro'yxatini ko'rish"),
+        BotCommand(command="setdelay", description="Sessionlar delay vaqtini o'zgartirish"),
+        BotCommand(command="status", description="Sessionlar holatini ko'rish")
     ])
     await dp.start_polling(bot)
 
