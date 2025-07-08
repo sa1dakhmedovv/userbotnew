@@ -37,6 +37,9 @@ if not os.path.exists(DATA_FILE):
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
+router = Router()
+dp.include_router(router)
+
 
 # ===== STATES =====
 class AddSession(StatesGroup):
