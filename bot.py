@@ -96,29 +96,35 @@ admin_rights = ChatAdminRights(
     invite_users=True, pin_messages=True, add_admins=False, manage_call=True
 )
 
-async def run_session(name):
-    params = get_session(name)
-    if not params or params["status"] != "running":
-        return
+async def cancel_running_task(name):
+    task = running_tasks.get(name)
+    if task and not task.done():
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+    running_tasks.pop(name, None)
 
+
+async def run_session(name):
     session_file = os.path.join(SESSIONS_DIR, f"{name}.session")
     client = TelegramClient(session_file, TELETHON_API_ID, TELETHON_API_HASH)
-    await client.start(params["phone_number"])
+    await client.start()
+    
+    try:
+        while True:
+            current = get_session(name)
+            if not current or current["status"] != "running":
+                break
 
-    while True:
-        current = get_session(name)
-        if not current or current["status"] != "running":
-            await client.disconnect()
-            break
+            floodwait_remaining = current.get("floodwait_remaining", 0)
+            if floodwait_remaining > 0:
+                await asyncio.sleep(1)
+                update_session(name, {"floodwait_remaining": floodwait_remaining - 1})
+                continue
 
-        # floodwait_remaining sanash
-        floodwait_remaining = current.get("floodwait_remaining", 0)
-        if floodwait_remaining > 0:
-            await asyncio.sleep(1)
-            update_session(name, {"floodwait_remaining": floodwait_remaining - 1})
-            continue
-
-        try:
+            # Guruh yaratish
             hozir = datetime.now()
             guruh_nom = f'{current["group_name"]} {current["index"]}'
             sana_oy = oylar[hozir.month]
@@ -142,17 +148,16 @@ async def run_session(name):
             update_session(name, {"index": current["index"] + 1})
             await asyncio.sleep(current["delay"])
 
-        except FloodWaitError as e:
-            await bot.send_message(current["owner_id"], f"⚠️ FloodWait {e.seconds} soniya session: {name}")
-            update_session(name, {"floodwait_remaining": e.seconds})
-        except ChatAdminRequiredError as e:
-            await bot.send_message(current["owner_id"], f"❌ Admin required error: {e}")
-            break
-        except Exception as e:
-            await bot.send_message(current["owner_id"], f"❌ Umumiy xato: {e}")
-            break
+        await client.disconnect()
+    except FloodWaitError as e:
+        await bot.send_message(current["owner_id"], f"⚠️ FloodWait {e.seconds} soniya session: {name}")
+        update_session(name, {"floodwait_remaining": e.seconds})
+    except Exception as e:
+        await bot.send_message(current["owner_id"], f"❌ Xato: {e}")
+    finally:
+        await client.disconnect()
+        running_tasks.pop(name, None)
 
-    await client.disconnect()
 
 # ===== ADMIN GUARD =====
 async def admin_guard(message: Message):
@@ -190,7 +195,7 @@ async def cmd_run(message: Message):
     if not session:
         return await message.answer("❌ Session topilmadi.")
 
-    # 🟢 Avval statusni running qilib saqlaymiz!
+    # 🔥 1. Statusni bazaga yozib qo'yamiz
     update_session(name, {
         "group_name": gname,
         "index": index,
@@ -200,10 +205,10 @@ async def cmd_run(message: Message):
         "owner_id": message.from_user.id
     })
 
-    # 🟢 Endi eski taskni bekor qilamiz
+    # 🔥 2. Oldingi taskni to'xtatamiz
     await cancel_running_task(name)
 
-    # 🟢 Endi yangi taskni yaratamiz
+    # 🔥 3. Yangi task yaratamiz
     task = asyncio.create_task(run_session(name))
     running_tasks[name] = task
     await message.answer(f"✅ Session '{name}' ishga tushdi.")
