@@ -190,8 +190,7 @@ async def cmd_run(message: Message):
     if not session:
         return await message.answer("❌ Session topilmadi.")
 
-    await cancel_running_task(name)
-
+    # 🟢 Avval statusni running qilib saqlaymiz!
     update_session(name, {
         "group_name": gname,
         "index": index,
@@ -200,9 +199,15 @@ async def cmd_run(message: Message):
         "status": "running",
         "owner_id": message.from_user.id
     })
+
+    # 🟢 Endi eski taskni bekor qilamiz
+    await cancel_running_task(name)
+
+    # 🟢 Endi yangi taskni yaratamiz
     task = asyncio.create_task(run_session(name))
     running_tasks[name] = task
     await message.answer(f"✅ Session '{name}' ishga tushdi.")
+
 
 @dp.message(Command("stop"))
 async def cmd_stop(message: Message):
