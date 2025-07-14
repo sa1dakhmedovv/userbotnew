@@ -43,12 +43,17 @@ async def guruh_ochish(client, session_name, params, bot_send=None):
         params['admin_user'],
         ChatAdminRights(
             change_info=True,
+            post_messages=True,
+            edit_messages=True,
             delete_messages=True,
             ban_users=True,
             invite_users=True,
             pin_messages=True,
-            add_admins=False,
-            manage_call=True
+            add_admins=True,
+            anonymous=True,
+            manage_call=True,
+            manage_topics=True,
+            other=True
         ),
         rank="Main boss"
     ))
