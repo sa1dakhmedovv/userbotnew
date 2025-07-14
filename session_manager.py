@@ -1,7 +1,7 @@
 import json
 import os
 
-CONFIG_FILE = 'data/config.json'
+CONFIG_FILE = 'data1/config.json'
 
 # Config faylini o'qish
 def load_config():
