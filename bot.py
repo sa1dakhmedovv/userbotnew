@@ -24,7 +24,7 @@ TELETHON_API_HASH = 'e18d2b78b71656725e29280e1bc6592f'
 ADMIN_ID = 5802051984
 
 SESSIONS_DIR = 'sessions'
-DATA_FILE = 'data1.json'
+DATA_FILE = 'data.json'
 LOG_FILE = 'guruhlar.txt'
 
 os.makedirs(SESSIONS_DIR, exist_ok=True)
